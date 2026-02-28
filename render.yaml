@@ -1,0 +1,8 @@
+services:
+  - type: web
+    name: leave-management
+    env: python
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: bash render-start.sh
+    runtime: python-3.11.9
