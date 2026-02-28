@@ -420,6 +420,6 @@ def admin_test_email(db: OrmSession = Depends(get_db), admin: User = Depends(req
     return {"ok": ok, "message": msg}
 
 # Serve built frontend (single-domain)
-dist_dir = Path(__file__).resolve().parent / settings.FRONTEND_DIST_DIR
+dist_dir = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if dist_dir.exists():
     app.mount("/", StaticFiles(directory=str(dist_dir), html=True), name="frontend")
