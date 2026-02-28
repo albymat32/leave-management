@@ -48,3 +48,21 @@ export function formatMonth(yyyyMm: string) {
     year: "numeric",
   });
 }
+
+const statusColor = {
+  approved: "#22c55e", // green
+  pending: "#f59e0b",  // amber
+  rejected: "#ef4444", // red
+};
+
+export function expandDates(start: string, end: string) {
+  const dates = [];
+  let d = new Date(start);
+  const e = new Date(end);
+
+  while (d <= e) {
+    dates.push(new Date(d));
+    d.setDate(d.getDate() + 1);
+  }
+  return dates;
+}

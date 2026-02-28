@@ -157,52 +157,45 @@ def logout(response: Response, user: User = Depends(get_current_user), db: OrmSe
 def me(user: User = Depends(get_current_user)):
     return {"id": str(user.id), "role": user.role, "name": user.name}
 
+def _dates_overlap(a_start: date, a_end: date, b_start: date, b_end: date) -> bool:
+    return a_start <= b_end and b_start <= a_end
+
 @app.post("/api/leaves", response_model=LeaveOut)
 def apply_leave(payload: LeaveApplyIn, db: OrmSession = Depends(get_db), employee: User = Depends(require_employee)):
+
+    # ---- NEW: overlap check ----
+    existing = (
+        db.query(LeaveRequest)
+        .filter(
+            LeaveRequest.employee_user_id == employee.id,
+            LeaveRequest.status.in_(["pending", "approved", "rejected"]),
+        )
+        .all()
+    )
+
+    for lr in existing:
+        if _dates_overlap(
+            payload.startDate,
+            payload.endDate,
+            lr.start_date,
+            lr.end_date,
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail=f"Leave already exists from {lr.start_date} to {lr.end_date} ({lr.status})",
+            )
+    # ---- END NEW ----
+
     try:
-        total, excluded_str = calc_total_days(payload.startDate, payload.endDate, payload.excludedDates)
+        total, excluded_str = calc_total_days(
+            payload.startDate,
+            payload.endDate,
+            payload.excludedDates
+        )
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid date range")
 
-    lr = LeaveRequest(
-        employee_user_id=employee.id,
-        start_date=payload.startDate,
-        end_date=payload.endDate,
-        excluded_dates=excluded_str,
-        total_days=total,
-        reason=payload.reason.strip(),
-        status="pending",
-    )
-    db.add(lr)
-    db.commit()
-    db.refresh(lr)
-
-    admin = db.query(User).filter(User.role == "admin").first()
-    if admin:
-        notify_admin_new_leave(
-    db,
-    admin=admin,
-    employee=employee,
-    start=lr.start_date.isoformat(),
-    end=lr.end_date.isoformat(),
-    total_days=lr.total_days,
-    excluded_dates=lr.excluded_dates,
-    reason=lr.reason,
-    applied_at=lr.created_at.isoformat(),
-)
-
-    return {
-        "id": str(lr.id),
-        "startDate": lr.start_date,
-        "endDate": lr.end_date,
-        "excludedDates": [datetime.fromisoformat(d).date() for d in lr.excluded_dates],
-        "totalDays": lr.total_days,
-        "reason": lr.reason,
-        "status": lr.status,
-        "adminComment": lr.admin_comment,
-        "createdAt": lr.created_at.isoformat(),
-    }
-
+    ...
 @app.get("/api/leaves/my", response_model=list[LeaveOut])
 def my_leaves(month: str | None = None, db: OrmSession = Depends(get_db), employee: User = Depends(require_employee)):
     q = db.query(LeaveRequest).filter(LeaveRequest.employee_user_id == employee.id)
