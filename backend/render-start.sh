@@ -3,8 +3,6 @@ set -e
 
 echo "Starting Leave Management API..."
 
-# Mark migrations as applied (NO table creation)
-python -m alembic stamp head
+alembic upgrade head || echo "Alembic skipped"
 
-# Start FastAPI
 exec uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}
