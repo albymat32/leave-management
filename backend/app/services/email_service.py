@@ -4,18 +4,28 @@ from sqlalchemy.orm import Session as OrmSession
 from app.models import EmailConfig, User
 from app.security import decrypt_text, encrypt_text
 from app.config import settings
+import requests
 
 
 def _is_valid(cfg: EmailConfig) -> bool:
     if not cfg.enabled:
         return False
-    if cfg.mode != "smtp":
-        return False
-    if not (cfg.smtp_host and cfg.smtp_port and cfg.smtp_user and cfg.smtp_pass_enc):
-        return False
+
     if not (cfg.sender_email and cfg.sender_name):
         return False
-    return True
+
+    if cfg.mode == "smtp":
+        return bool(
+            cfg.smtp_host
+            and cfg.smtp_port
+            and cfg.smtp_user
+            and cfg.smtp_pass_enc
+        )
+
+    if cfg.mode == "api" and cfg.provider == "brevo":
+        return bool(cfg.api_key_enc)
+
+    return False
 
 
 def get_email_config(db: OrmSession) -> EmailConfig:
@@ -72,17 +82,74 @@ def send_email_smtp(cfg: EmailConfig, to_email: str, subject: str, body: str) ->
         server.login(cfg.smtp_user, smtp_pass)
         server.send_message(msg)
 
+def send_email_brevo(cfg: EmailConfig, to_email: str, subject: str, body: str) -> None:
+    api_key = decrypt_text(cfg.api_key_enc or "", settings.EMAIL_CRED_SECRET)
+
+    if not api_key or not api_key.startswith("xkeysib-"):
+        raise ValueError("Invalid Brevo API key")
+
+    r = requests.post(
+        "https://api.brevo.com/v3/smtp/email",
+        headers={
+            "api-key": api_key,
+            "Content-Type": "application/json",
+            "accept": "application/json",
+        },
+        json={
+            "sender": {"name": cfg.sender_name, "email": cfg.sender_email},
+            "to": [{"email": to_email}],
+            "subject": subject,
+            "textContent": body,
+        },
+        timeout=10,
+    )
+
+    r.raise_for_status()
 
 def try_send(db: OrmSession, to_email: str, subject: str, body: str) -> tuple[bool, str]:
     cfg = get_email_config(db)
+
     if not _is_valid(cfg):
         return True, "Email disabled or invalid config (skipped)."
+
     try:
-        send_email_smtp(cfg, to_email, subject, body)
+        if cfg.mode == "api" and cfg.provider == "brevo":
+            send_email_brevo(cfg, to_email, subject, body)
+        elif cfg.mode == "smtp":
+            send_email_smtp(cfg, to_email, subject, body)
+        else:
+            return True, "Email skipped (unsupported mode)."
+
         return True, "Sent"
     except Exception as e:
-        # Graceful failure: do not break app flows
         return False, f"Email send failed: {e}"
+    cfg = get_email_config(db)
+
+    if not cfg.enabled:
+        return True, "Email disabled (skipped)."
+
+    try:
+        if cfg.mode == "api" and cfg.provider == "brevo":
+            send_email_brevo(cfg, to_email, subject, body)
+        elif cfg.mode == "smtp":
+            send_email_smtp(cfg, to_email, subject, body)
+        else:
+            return True, "Email skipped (unsupported mode)."
+
+        return True, "Sent"
+    except Exception as e:
+        return False, f"Email send failed: {e}"
+
+# def try_send(db: OrmSession, to_email: str, subject: str, body: str) -> tuple[bool, str]:
+#     cfg = get_email_config(db)
+#     if not _is_valid(cfg):
+#         return True, "Email disabled or invalid config (skipped)."
+#     try:
+#         send_email_smtp(cfg, to_email, subject, body)
+#         return True, "Sent"
+#     except Exception as e:
+#         # Graceful failure: do not break app flows
+#         return False, f"Email send failed: {e}"
 
 
 def notify_admin_new_leave(

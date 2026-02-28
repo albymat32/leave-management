@@ -1,30 +1,23 @@
+from cryptography.fernet import Fernet
 import base64
-import os
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+import hashlib
 
 
-def _key_from_secret(secret: str) -> bytes:
-    # Derive a 32-byte key from provided secret (simple hash-less stretch).
-    # For MVP: pad/trim to 32 bytes. In production, use HKDF/PBKDF2.
-    raw = secret.encode("utf-8")
-    if len(raw) >= 32:
-        return raw[:32]
-    return raw.ljust(32, b"\0")
+def _fernet(secret: str) -> Fernet:
+    # Ensure stable 32-byte key
+    key = hashlib.sha256(secret.encode()).digest()
+    return Fernet(base64.urlsafe_b64encode(key))
 
 
-def encrypt_text(plaintext: str, secret: str) -> str:
-    key = _key_from_secret(secret)
-    aesgcm = AESGCM(key)
-    nonce = os.urandom(12)
-    ct = aesgcm.encrypt(nonce, plaintext.encode("utf-8"), None)
-    blob = nonce + ct
-    return base64.urlsafe_b64encode(blob).decode("utf-8")
+def encrypt_text(value: str, secret: str) -> str:
+    if not value:
+        return ""
+    f = _fernet(secret)
+    return f.encrypt(value.encode()).decode()
 
 
-def decrypt_text(ciphertext: str, secret: str) -> str:
-    key = _key_from_secret(secret)
-    data = base64.urlsafe_b64decode(ciphertext.encode("utf-8"))
-    nonce, ct = data[:12], data[12:]
-    aesgcm = AESGCM(key)
-    pt = aesgcm.decrypt(nonce, ct, None)
-    return pt.decode("utf-8")
+def decrypt_text(value: str, secret: str) -> str:
+    if not value:
+        return ""
+    f = _fernet(secret)
+    return f.decrypt(value.encode()).decode()
